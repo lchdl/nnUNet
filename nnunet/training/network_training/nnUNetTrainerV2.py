@@ -34,7 +34,7 @@ from torch import nn
 from torch.cuda.amp import autocast
 from nnunet.training.learning_rate.poly_lr import poly_lr
 from batchgenerators.utilities.file_and_folder_operations import *
-
+import random
 
 class nnUNetTrainerV2(nnUNetTrainer):
     """
@@ -42,15 +42,29 @@ class nnUNetTrainerV2(nnUNetTrainer):
     """
 
     def __init__(self, plans_file, fold, output_folder=None, dataset_directory=None, batch_dice=True, stage=None,
-                 unpack_data=True, deterministic=True, fp16=False):
+                 unpack_data=False, deterministic=True, fp16=False, max_num_epochs=None, num_batches_per_epoch=None,
+                 no_validation=False):
         super().__init__(plans_file, fold, output_folder, dataset_directory, batch_dice, stage, unpack_data,
                          deterministic, fp16)
-        self.max_num_epochs = 1000
+        self.max_num_epochs = 300 if max_num_epochs is None else max_num_epochs
+        self.num_batches_per_epoch = 250 if num_batches_per_epoch is None else num_batches_per_epoch
+        self.no_validation = no_validation
+        self.print_to_log_file('set max_num_epochs=%d' % self.max_num_epochs)
+        self.print_to_log_file('set num_batches_per_epoch=%d' % self.num_batches_per_epoch)
+        self.print_to_log_file('no validation set?', self.no_validation)
+
         self.initial_lr = 1e-2
         self.deep_supervision_scales = None
         self.ds_loss_weights = None
 
-        self.pin_memory = True
+        self.pin_memory = False
+        self.unpack_data = False
+
+        self.use_customized_validation_set = False
+
+    def set_custom_validation_set(self, cases):
+        self.use_customized_validation_set = True
+        self.customized_validation_set_cases = cases
 
     def initialize(self, training=True, force_load_plans=False):
         """
@@ -93,15 +107,6 @@ class nnUNetTrainerV2(nnUNetTrainer):
                                                       "_stage%d" % self.stage)
             if training:
                 self.dl_tr, self.dl_val = self.get_basic_generators()
-                if self.unpack_data:
-                    print("unpacking dataset")
-                    unpack_dataset(self.folder_with_preprocessed_data)
-                    print("done")
-                else:
-                    print(
-                        "INFO: Not unpacking data! Training may be slow due to that. Pray you are not using 2d or you "
-                        "will wait all winter for your model to finish!")
-
                 self.tr_gen, self.val_gen = get_moreDA_augmentation(
                     self.dl_tr, self.dl_val,
                     self.data_aug_params[
@@ -282,50 +287,79 @@ class nnUNetTrainerV2(nnUNetTrainer):
         use a random 80:20 data split.
         :return:
         """
-        if self.fold == "all":
-            # if fold==all then we use all images for training and validation
-            tr_keys = val_keys = list(self.dataset.keys())
+        if self.no_validation:
+            all_keys = list(self.dataset.keys())
+            tr_keys = all_keys
+            val_keys = all_keys
         else:
-            splits_file = join(self.dataset_directory, "splits_final.pkl")
+            if self.fold == "all":
+                if self.use_customized_validation_set == False:
+                    all_keys = list(self.dataset.keys())
+                    validation_percent = 0.2 # 20%
+                    num_samples = len(all_keys)
+                    val_num = int(num_samples*validation_percent)
+                    if val_num < 1:
+                        val_num = 1
+                    tr_num = num_samples-val_num
+                    random.seed(666)
+                    id_list = [i for i in range(0,num_samples-1)]
+                    val_ids = random.sample(id_list,val_num)
+                    val_keys = [all_keys[i] for i in val_ids]
+                    tr_keys = [item for item in all_keys if item not in val_keys]
+                else:
+                    all_keys = list(self.dataset.keys())
+                    val_keys = self.customized_validation_set_cases
+                    for key in val_keys:
+                        assert key in all_keys, 'error, cannot find case "%s" in dataset but it is used in validation.' % key
+                    tr_keys = [ key for key in all_keys if key not in val_keys ]
+                    tr_num = len(tr_keys)
+                    val_num = len(val_keys)
 
-            # if the split file does not exist we need to create it
-            if not isfile(splits_file):
-                self.print_to_log_file("Creating new 5-fold cross-validation split...")
-                splits = []
-                all_keys_sorted = np.sort(list(self.dataset.keys()))
-                kfold = KFold(n_splits=5, shuffle=True, random_state=12345)
-                for i, (train_idx, test_idx) in enumerate(kfold.split(all_keys_sorted)):
-                    train_keys = np.array(all_keys_sorted)[train_idx]
-                    test_keys = np.array(all_keys_sorted)[test_idx]
-                    splits.append(OrderedDict())
-                    splits[-1]['train'] = train_keys
-                    splits[-1]['val'] = test_keys
-                save_pickle(splits, splits_file)
-
+                print('number of cases used in training:',tr_num)
+                print('number of cases used in validation:',val_num)
+                print('cases used for validation:\n',val_keys)
+                
             else:
-                self.print_to_log_file("Using splits from existing split file:", splits_file)
-                splits = load_pickle(splits_file)
-                self.print_to_log_file("The split file contains %d splits." % len(splits))
+                splits_file = join(self.dataset_directory, "splits_final.pkl")
 
-            self.print_to_log_file("Desired fold for training: %d" % self.fold)
-            if self.fold < len(splits):
-                tr_keys = splits[self.fold]['train']
-                val_keys = splits[self.fold]['val']
-                self.print_to_log_file("This split has %d training and %d validation cases."
-                                       % (len(tr_keys), len(val_keys)))
-            else:
-                self.print_to_log_file("INFO: You requested fold %d for training but splits "
-                                       "contain only %d folds. I am now creating a "
-                                       "random (but seeded) 80:20 split!" % (self.fold, len(splits)))
-                # if we request a fold that is not in the split file, create a random 80:20 split
-                rnd = np.random.RandomState(seed=12345 + self.fold)
-                keys = np.sort(list(self.dataset.keys()))
-                idx_tr = rnd.choice(len(keys), int(len(keys) * 0.8), replace=False)
-                idx_val = [i for i in range(len(keys)) if i not in idx_tr]
-                tr_keys = [keys[i] for i in idx_tr]
-                val_keys = [keys[i] for i in idx_val]
-                self.print_to_log_file("This random 80:20 split has %d training and %d validation cases."
-                                       % (len(tr_keys), len(val_keys)))
+                # if the split file does not exist we need to create it
+                if not isfile(splits_file):
+                    self.print_to_log_file("Creating new 5-fold cross-validation split...")
+                    splits = []
+                    all_keys_sorted = np.sort(list(self.dataset.keys()))
+                    kfold = KFold(n_splits=5, shuffle=True, random_state=12345)
+                    for i, (train_idx, test_idx) in enumerate(kfold.split(all_keys_sorted)):
+                        train_keys = np.array(all_keys_sorted)[train_idx]
+                        test_keys = np.array(all_keys_sorted)[test_idx]
+                        splits.append(OrderedDict())
+                        splits[-1]['train'] = train_keys
+                        splits[-1]['val'] = test_keys
+                    save_pickle(splits, splits_file)
+
+                else:
+                    self.print_to_log_file("Using splits from existing split file:", splits_file)
+                    splits = load_pickle(splits_file)
+                    self.print_to_log_file("The split file contains %d splits." % len(splits))
+
+                self.print_to_log_file("Desired fold for training: %d" % self.fold)
+                if self.fold < len(splits):
+                    tr_keys = splits[self.fold]['train']
+                    val_keys = splits[self.fold]['val']
+                    self.print_to_log_file("This split has %d training and %d validation cases."
+                                        % (len(tr_keys), len(val_keys)))
+                else:
+                    self.print_to_log_file("INFO: You requested fold %d for training but splits "
+                                        "contain only %d folds. I am now creating a "
+                                        "random (but seeded) 80:20 split!" % (self.fold, len(splits)))
+                    # if we request a fold that is not in the split file, create a random 80:20 split
+                    rnd = np.random.RandomState(seed=12345 + self.fold)
+                    keys = np.sort(list(self.dataset.keys()))
+                    idx_tr = rnd.choice(len(keys), int(len(keys) * 0.8), replace=False)
+                    idx_val = [i for i in range(len(keys)) if i not in idx_tr]
+                    tr_keys = [keys[i] for i in idx_tr]
+                    val_keys = [keys[i] for i in idx_val]
+                    self.print_to_log_file("This random 80:20 split has %d training and %d validation cases."
+                                        % (len(tr_keys), len(val_keys)))
 
         tr_keys.sort()
         val_keys.sort()

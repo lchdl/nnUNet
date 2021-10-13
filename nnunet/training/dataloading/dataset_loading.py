@@ -13,10 +13,10 @@
 #    limitations under the License.
 
 from collections import OrderedDict
+from batchgenerators.augmentations.utils import random_crop_2D_image_batched, pad_nd_image
 import numpy as np
+from batchgenerators.dataloading import SlimDataLoaderBase
 from multiprocessing import Pool
-
-from batchgenerators.dataloading.data_loader import SlimDataLoaderBase
 
 from nnunet.configuration import default_num_threads
 from nnunet.paths import preprocessing_output_dir
@@ -211,10 +211,7 @@ class DataLoader3D(SlimDataLoaderBase):
             num_seg = 1
 
         k = list(self._data.keys())[0]
-        if isfile(self._data[k]['data_file'][:-4] + ".npy"):
-            case_all_data = np.load(self._data[k]['data_file'][:-4] + ".npy", self.memmap_mode)
-        else:
-            case_all_data = np.load(self._data[k]['data_file'])['data']
+        case_all_data = np.load(self._data[k]['data_file'])['data']
         num_color_channels = case_all_data.shape[0] - 1
         data_shape = (self.batch_size, num_color_channels, *self.patch_size)
         seg_shape = (self.batch_size, num_seg, *self.patch_size)
@@ -239,12 +236,8 @@ class DataLoader3D(SlimDataLoaderBase):
                 properties = load_pickle(self._data[i]['properties_file'])
             case_properties.append(properties)
 
-            # cases are stored as npz, but we require unpack_dataset to be run. This will decompress them into npy
-            # which is much faster to access
-            if isfile(self._data[i]['data_file'][:-4] + ".npy"):
-                case_all_data = np.load(self._data[i]['data_file'][:-4] + ".npy", self.memmap_mode)
-            else:
-                case_all_data = np.load(self._data[i]['data_file'])['data']
+            # load npz
+            case_all_data = np.load(self._data[i]['data_file'])['data']
 
             # If we are doing the cascade then we will also need to load the segmentation of the previous stage and
             # concatenate it. Here it will be concatenates to the segmentation because the augmentations need to be
@@ -430,10 +423,7 @@ class DataLoader2D(SlimDataLoaderBase):
         num_seg = 1
 
         k = list(self._data.keys())[0]
-        if isfile(self._data[k]['data_file'][:-4] + ".npy"):
-            case_all_data = np.load(self._data[k]['data_file'][:-4] + ".npy", self.memmap_mode)
-        else:
-            case_all_data = np.load(self._data[k]['data_file'])['data']
+        case_all_data = np.load(self._data[k]['data_file'])['data']
         num_color_channels = case_all_data.shape[0] - num_seg
         data_shape = (self.batch_size, num_color_channels, *self.patch_size)
         seg_shape = (self.batch_size, num_seg, *self.patch_size)
@@ -461,11 +451,8 @@ class DataLoader2D(SlimDataLoaderBase):
             else:
                 force_fg = False
 
-            if not isfile(self._data[i]['data_file'][:-4] + ".npy"):
-                # lets hope you know what you're doing
-                case_all_data = np.load(self._data[i]['data_file'][:-4] + ".npz")['data']
-            else:
-                case_all_data = np.load(self._data[i]['data_file'][:-4] + ".npy", self.memmap_mode)
+            # load npz
+            case_all_data = np.load(self._data[i]['data_file'][:-4] + ".npz")['data']
 
             # this is for when there is just a 2d slice in case_all_data (2d support)
             if len(case_all_data.shape) == 3:

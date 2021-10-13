@@ -12,7 +12,6 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
-
 import sys
 from copy import deepcopy
 from typing import Union, Tuple
@@ -22,6 +21,107 @@ import SimpleITK as sitk
 from batchgenerators.augmentations.utils import resize_segmentation
 from nnunet.preprocessing.preprocessing import get_lowres_axis, get_do_separate_z, resample_data_or_seg
 from batchgenerators.utilities.file_and_folder_operations import *
+from nnunet.utilities.file_ops import gfd, gfn, join_path
+
+
+def save_segmentation_softmax(segmentation_softmax: Union[str, np.ndarray], out_fname: str,
+                            properties_dict: dict, order: int = 1,
+                            region_class_order: Tuple[Tuple[int]] = None,
+                            resampled_npz_fname: str = None,
+                            force_separate_z: bool = None,
+                            interpolation_order_z: int = 0, 
+                            verbose: bool = True):
+    '''
+    save raw softmax output values instead of segmentations.
+    '''
+
+    if verbose: print("force_separate_z:", force_separate_z, "interpolation order:", order)
+
+    if isinstance(segmentation_softmax, str):
+        assert isfile(segmentation_softmax), "If isinstance(segmentation_softmax, str) then " \
+                                             "isfile(segmentation_softmax) must be True"
+        del_file = deepcopy(segmentation_softmax)
+        segmentation_softmax = np.load(segmentation_softmax)
+        os.remove(del_file)
+
+    # first resample, then put result into bbox of cropping, then save
+    current_shape = segmentation_softmax.shape
+    shape_original_after_cropping = properties_dict.get('size_after_cropping')
+    shape_original_before_cropping = properties_dict.get('original_size_of_raw_data')
+
+    if np.any([i != j for i, j in zip(np.array(current_shape[1:]), np.array(shape_original_after_cropping))]):
+        if force_separate_z is None:
+            if get_do_separate_z(properties_dict.get('original_spacing')):
+                do_separate_z = True
+                lowres_axis = get_lowres_axis(properties_dict.get('original_spacing'))
+            elif get_do_separate_z(properties_dict.get('spacing_after_resampling')):
+                do_separate_z = True
+                lowres_axis = get_lowres_axis(properties_dict.get('spacing_after_resampling'))
+            else:
+                do_separate_z = False
+                lowres_axis = None
+        else:
+            do_separate_z = force_separate_z
+            if do_separate_z:
+                lowres_axis = get_lowres_axis(properties_dict.get('original_spacing'))
+            else:
+                lowres_axis = None
+
+        if verbose: print("separate z:", do_separate_z, "lowres axis", lowres_axis)
+        seg_old_spacing = resample_data_or_seg(segmentation_softmax, shape_original_after_cropping, is_seg=False,
+                                               axis=lowres_axis, order=order, do_separate_z=do_separate_z, cval=0,
+                                               order_z=interpolation_order_z)
+    else:
+        if verbose: print("no resampling necessary")
+        seg_old_spacing = segmentation_softmax
+    
+    if resampled_npz_fname is not None:
+        np.savez_compressed(resampled_npz_fname, softmax=seg_old_spacing.astype(np.float16))
+        # this is needed for ensembling if the nonlinearity is sigmoid
+        if region_class_order is not None:
+            properties_dict['regions_class_order'] = region_class_order
+        save_pickle(properties_dict, resampled_npz_fname[:-4] + ".pkl")
+
+    bbox = properties_dict.get('crop_bbox')
+
+    if bbox is not None:
+        seg_old_size = np.zeros( [ seg_old_spacing.shape[0], *shape_original_before_cropping ] )
+        for c in range(3):
+            bbox[c][1] = np.min((bbox[c][0] + seg_old_spacing.shape[c+1], shape_original_before_cropping[c]))
+        seg_old_size[:, bbox[0][0]:bbox[0][1], bbox[1][0]:bbox[1][1], bbox[2][0]:bbox[2][1]] = seg_old_spacing
+    else:
+        seg_old_size = seg_old_spacing
+
+    # ignore seg_postprogess_fn here because we want to save raw softmax output
+    seg_old_size_postprocessed = seg_old_size
+
+    print('image shape after postprocessing: %s' % str(seg_old_size_postprocessed.shape))
+    
+    ####################################################################################
+    # now its time to save raw softmax probabilities to disk
+    # but here i only want to save some of the softmax channels, because softmax outputs can
+    # consume lots of disk space (~50MB per foreground channel, ~2MB per background channel)
+    ####################################################################################
+    # only save channel 0 (background), if you want to disable this feature you can set "save_channels=None"
+    save_channels = [0]
+    # i can expose this setting as a argparse parameter but doing that will makes the inference interface
+    # too complicated, and maybe several months i will forget functions of some parameters... so here i will
+    # "keep things simple and stupid", and try not to "over-engineering" the code.
+    if save_channels is not None:
+        print('only this/these channel(s) will be saved:', save_channels)
+    else:
+        print('all channels will be saved.')
+    for c in range(seg_old_size_postprocessed.shape[0]):
+        if c not in save_channels:
+            continue
+        out_fname_channel = join_path(gfd(out_fname), gfn(out_fname, no_extension=True) + '_%d.nii.gz' % c)
+        seg_old_size_postprocessed_channel = seg_old_size_postprocessed[c]
+        seg_resized_itk = sitk.GetImageFromArray(seg_old_size_postprocessed_channel.astype('float32'))
+        seg_resized_itk.SetSpacing(properties_dict['itk_spacing'])
+        seg_resized_itk.SetOrigin(properties_dict['itk_origin'])
+        seg_resized_itk.SetDirection(properties_dict['itk_direction'])
+        sitk.WriteImage(seg_resized_itk, out_fname_channel)
+        print('channel result saved to "%s".' % out_fname_channel)
 
 
 def save_segmentation_nifti_from_softmax(segmentation_softmax: Union[str, np.ndarray], out_fname: str,
@@ -102,8 +202,8 @@ def save_segmentation_nifti_from_softmax(segmentation_softmax: Union[str, np.nda
 
         if verbose: print("separate z:", do_separate_z, "lowres axis", lowres_axis)
         seg_old_spacing = resample_data_or_seg(segmentation_softmax, shape_original_after_cropping, is_seg=False,
-                                               axis=lowres_axis, order=order, do_separate_z=do_separate_z,
-                                               order_z=interpolation_order_z)
+                                               axis=lowres_axis, order=order, do_separate_z=do_separate_z, cval=0,
+                                               order_z=interpolation_order_z, verbose=False)
         # seg_old_spacing = resize_softmax_output(segmentation_softmax, shape_original_after_cropping, order=order)
     else:
         if verbose: print("no resampling necessary")
@@ -186,7 +286,7 @@ def save_segmentation_nifti(segmentation, out_fname, dct, order=1, force_separat
 
     if np.any(np.array(current_shape) != np.array(shape_original_after_cropping)):
         if order == 0:
-            seg_old_spacing = resize_segmentation(segmentation, shape_original_after_cropping, 0)
+            seg_old_spacing = resize_segmentation(segmentation, shape_original_after_cropping, 0, 0)
         else:
             if force_separate_z is None:
                 if get_do_separate_z(dct.get('original_spacing')):
@@ -207,7 +307,7 @@ def save_segmentation_nifti(segmentation, out_fname, dct, order=1, force_separat
 
             print("separate z:", do_separate_z, "lowres axis", lowres_axis)
             seg_old_spacing = resample_data_or_seg(segmentation[None], shape_original_after_cropping, is_seg=True,
-                                                   axis=lowres_axis, order=order, do_separate_z=do_separate_z,
+                                                   axis=lowres_axis, order=order, do_separate_z=do_separate_z, cval=0,
                                                    order_z=order_z)[0]
     else:
         seg_old_spacing = segmentation

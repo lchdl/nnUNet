@@ -106,13 +106,6 @@ def main():
     parser.add_argument("--all_in_gpu", type=str, default="None", required=False, help="can be None, False or True. "
                                                                                        "Do not touch.")
     parser.add_argument("--step_size", type=float, default=0.5, required=False, help="don't touch")
-    # parser.add_argument("--interp_order", required=False, default=3, type=int,
-    #                     help="order of interpolation for segmentations, has no effect if mode=fastest. Do not touch this.")
-    # parser.add_argument("--interp_order_z", required=False, default=0, type=int,
-    #                     help="order of interpolation along z is z is done differently. Do not touch this.")
-    # parser.add_argument("--force_separate_z", required=False, default="None", type=str,
-    #                     help="force_separate_z resampling. Can be None, True or False, has no effect if mode=fastest. "
-    #                          "Do not touch this.")
     parser.add_argument('-chk',
                         help='checkpoint name, default: model_final_checkpoint',
                         required=False,
@@ -121,6 +114,13 @@ def main():
                         help='Predictions are done with mixed precision by default. This improves speed and reduces '
                              'the required vram. If you want to disable mixed precision you can set this flag. Note '
                              'that yhis is not recommended (mixed precision is ~2x faster!)')
+
+    parser.add_argument('--save_softmax', required=False ,default=False, action='store_true',
+                        help='Save softmax probabilities for test subjects.')
+    parser.add_argument('--selected_cases', type=str, required=False, nargs='+',
+                        help='Specify some case names to predict. This is not required, if not set, all cases will be '
+                        'sent for prediction.')
+
 
     args = parser.parse_args()
     input_folder = args.input_folder
@@ -134,9 +134,6 @@ def main():
     num_threads_nifti_save = args.num_threads_nifti_save
     disable_tta = args.disable_tta
     step_size = args.step_size
-    # interp_order = args.interp_order
-    # interp_order_z = args.interp_order_z
-    # force_separate_z = args.force_separate_z
     overwrite_existing = args.overwrite_existing
     mode = args.mode
     all_in_gpu = args.all_in_gpu
@@ -146,21 +143,15 @@ def main():
 
     task_name = args.task_name
 
+    save_softmax = args.save_softmax
+    selected_cases = args.selected_cases
+
     if not task_name.startswith("Task"):
         task_id = int(task_name)
         task_name = convert_id_to_task_name(task_id)
 
     assert model in ["2d", "3d_lowres", "3d_fullres", "3d_cascade_fullres"], "-m must be 2d, 3d_lowres, 3d_fullres or " \
                                                                              "3d_cascade_fullres"
-
-    # if force_separate_z == "None":
-    #     force_separate_z = None
-    # elif force_separate_z == "False":
-    #     force_separate_z = False
-    # elif force_separate_z == "True":
-    #     force_separate_z = True
-    # else:
-    #     raise ValueError("force_separate_z must be None, True or False. Given: %s" % force_separate_z)
 
     if lowres_segmentations == "None":
         lowres_segmentations = None
@@ -199,7 +190,8 @@ def main():
                             num_threads_preprocessing, num_threads_nifti_save, None, part_id, num_parts, not disable_tta,
                             overwrite_existing=overwrite_existing, mode=mode, overwrite_all_in_gpu=all_in_gpu,
                             mixed_precision=not args.disable_mixed_precision,
-                            step_size=step_size)
+                            step_size=step_size,
+                            save_softmax=save_softmax, selected_cases = selected_cases)
         lowres_segmentations = lowres_output_folder
         torch.cuda.empty_cache()
         print("3d_lowres done")
@@ -218,7 +210,8 @@ def main():
                         num_threads_nifti_save, lowres_segmentations, part_id, num_parts, not disable_tta,
                         overwrite_existing=overwrite_existing, mode=mode, overwrite_all_in_gpu=all_in_gpu,
                         mixed_precision=not args.disable_mixed_precision,
-                        step_size=step_size, checkpoint_name=args.chk)
+                        step_size=step_size, checkpoint_name=args.chk,
+                        save_softmax=save_softmax, selected_cases = selected_cases)
 
 
 if __name__ == "__main__":

@@ -64,6 +64,8 @@ def get_default_configuration(network, task, network_trainer, plans_identifier=d
     print("###############################################")
     print("I am running the following nnUNet: %s" % network)
     print("My trainer class is: ", trainer_class)
+    print('Task name is: "%s"' % task)
+
     print("For that I will be using the following configuration:")
     summarize_plans(plans_file)
     print("I am using stage %d from these plans" % stage)

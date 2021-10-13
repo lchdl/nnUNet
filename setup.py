@@ -2,26 +2,27 @@ from setuptools import setup, find_namespace_packages
 
 setup(name='nnunet',
       packages=find_namespace_packages(include=["nnunet", "nnunet.*"]),
-      version='1.7.0',
+      version='1.6.6',
       description='nnU-Net. Framework for out-of-the box biomedical image segmentation.',
       url='https://github.com/MIC-DKFZ/nnUNet',
       author='Division of Medical Image Computing, German Cancer Research Center',
       author_email='f.isensee@dkfz-heidelberg.de',
       license='Apache License Version 2.0, January 2004',
       install_requires=[
-            "torch>=1.6.0a",
-            "tqdm",
+            "torch==1.7.0+cu92",
             "dicom2nifti",
             "scikit-image>=0.14",
             "medpy",
             "scipy",
-            "batchgenerators>=0.23",
+            "batchgenerators>=0.21",
             "numpy",
             "sklearn",
             "SimpleITK",
             "pandas",
             "requests",
-            "nibabel", 'tifffile'
+            "nibabel", 
+            'tifffile',
+            'xlsxwriter'
       ],
       entry_points={
           'console_scripts': [

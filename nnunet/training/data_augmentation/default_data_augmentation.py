@@ -16,14 +16,10 @@ import os
 from copy import deepcopy
 
 import numpy as np
-from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAugmenter
-from batchgenerators.transforms.abstract_transforms import Compose
-from batchgenerators.transforms.channel_selection_transforms import DataChannelSelectionTransform, \
-    SegChannelSelectionTransform
-from batchgenerators.transforms.color_transforms import GammaTransform
-from batchgenerators.transforms.spatial_transforms import SpatialTransform, MirrorTransform
+from batchgenerators.dataloading import MultiThreadedAugmenter
+from batchgenerators.transforms import DataChannelSelectionTransform, SegChannelSelectionTransform, SpatialTransform, \
+    GammaTransform, MirrorTransform, Compose
 from batchgenerators.transforms.utility_transforms import RemoveLabelTransform, RenameTransform, NumpyToTensor
-
 from nnunet.training.data_augmentation.custom_transforms import Convert3DTo2DTransform, Convert2DTo3DTransform, \
     MaskTransform, ConvertSegmentationToRegionsTransform
 from nnunet.training.data_augmentation.pyramid_augmentations import MoveSegAsOneHotToData, \
@@ -132,7 +128,7 @@ def get_patch_size(final_patch_size, rot_x, rot_y, rot_z, scale_range):
 
 
 def get_default_augmentation(dataloader_train, dataloader_val, patch_size, params=default_3D_augmentation_params,
-                             border_val_seg=-1, pin_memory=True,
+                             border_val_seg=-1, pin_memory=False,
                              seeds_train=None, seeds_val=None, regions=None):
     assert params.get('mirror') is None, "old version of params, use new keyword do_mirror"
     tr_transforms = []

@@ -13,7 +13,7 @@
 #    limitations under the License.
 
 import numpy as np
-from batchgenerators.transforms.abstract_transforms import AbstractTransform
+from batchgenerators.transforms import AbstractTransform
 
 
 class RemoveKeyTransform(AbstractTransform):

@@ -24,6 +24,8 @@ import numpy as np
 from batchgenerators.utilities.file_and_folder_operations import *
 from multiprocessing.pool import Pool
 
+from typing import Union
+
 
 def get_do_separate_z(spacing, anisotropy_threshold=RESAMPLING_SEPARATE_Z_ANISO_THRESHOLD):
     do_separate_z = (np.max(spacing) / np.min(spacing)) > anisotropy_threshold
@@ -36,9 +38,11 @@ def get_lowres_axis(new_spacing):
 
 
 def resample_patient(data, seg, original_spacing, target_spacing, order_data=3, order_seg=0, force_separate_z=False,
-                     order_z_data=0, order_z_seg=0,
+                     cval_data=0, cval_seg=-1, order_z_data=0, order_z_seg=0,
                      separate_z_anisotropy_threshold=RESAMPLING_SEPARATE_Z_ANISO_THRESHOLD):
     """
+    :param cval_seg:
+    :param cval_data:
     :param data:
     :param seg:
     :param original_spacing:
@@ -95,18 +99,19 @@ def resample_patient(data, seg, original_spacing, target_spacing, order_data=3, 
             pass
 
     if data is not None:
-        data_reshaped = resample_data_or_seg(data, new_shape, False, axis, order_data, do_separate_z,
+        data_reshaped = resample_data_or_seg(data, new_shape, False, axis, order_data, do_separate_z, cval=cval_data,
                                              order_z=order_z_data)
     else:
         data_reshaped = None
     if seg is not None:
-        seg_reshaped = resample_data_or_seg(seg, new_shape, True, axis, order_seg, do_separate_z, order_z=order_z_seg)
+        seg_reshaped = resample_data_or_seg(seg, new_shape, True, axis, order_seg, do_separate_z, cval=cval_seg,
+                                            order_z=order_z_seg)
     else:
         seg_reshaped = None
     return data_reshaped, seg_reshaped
 
 
-def resample_data_or_seg(data, new_shape, is_seg, axis=None, order=3, do_separate_z=False, order_z=0):
+def resample_data_or_seg(data, new_shape, is_seg, axis=None, order=3, do_separate_z=False, cval=0, order_z=0, verbose=True):
     """
     separate_z=True will resample with order 0 along z
     :param data:
@@ -132,7 +137,8 @@ def resample_data_or_seg(data, new_shape, is_seg, axis=None, order=3, do_separat
     if np.any(shape != new_shape):
         data = data.astype(float)
         if do_separate_z:
-            print("separate z, order in z is", order_z, "order inplane is", order)
+            if verbose: 
+                print("separate z, order in z is", order_z, "order inplane is", order)
             assert len(axis) == 1, "only one anisotropic axis supported"
             axis = axis[0]
             if axis == 0:
@@ -147,11 +153,11 @@ def resample_data_or_seg(data, new_shape, is_seg, axis=None, order=3, do_separat
                 reshaped_data = []
                 for slice_id in range(shape[axis]):
                     if axis == 0:
-                        reshaped_data.append(resize_fn(data[c, slice_id], new_shape_2d, order, **kwargs))
+                        reshaped_data.append(resize_fn(data[c, slice_id], new_shape_2d, order, cval=cval, **kwargs))
                     elif axis == 1:
-                        reshaped_data.append(resize_fn(data[c, :, slice_id], new_shape_2d, order, **kwargs))
+                        reshaped_data.append(resize_fn(data[c, :, slice_id], new_shape_2d, order, cval=cval, **kwargs))
                     else:
-                        reshaped_data.append(resize_fn(data[c, :, :, slice_id], new_shape_2d, order,
+                        reshaped_data.append(resize_fn(data[c, :, :, slice_id], new_shape_2d, order, cval=cval,
                                                        **kwargs))
                 reshaped_data = np.stack(reshaped_data, axis)
                 if shape[axis] != new_shape[axis]:
@@ -171,7 +177,7 @@ def resample_data_or_seg(data, new_shape, is_seg, axis=None, order=3, do_separat
 
                     coord_map = np.array([map_rows, map_cols, map_dims])
                     if not is_seg or order_z == 0:
-                        reshaped_final_data.append(map_coordinates(reshaped_data, coord_map, order=order_z,
+                        reshaped_final_data.append(map_coordinates(reshaped_data, coord_map, order=order_z, cval=cval,
                                                                    mode='nearest')[None])
                     else:
                         unique_labels = np.unique(reshaped_data)
@@ -180,26 +186,27 @@ def resample_data_or_seg(data, new_shape, is_seg, axis=None, order=3, do_separat
                         for i, cl in enumerate(unique_labels):
                             reshaped_multihot = np.round(
                                 map_coordinates((reshaped_data == cl).astype(float), coord_map, order=order_z,
-                                                mode='nearest'))
+                                                cval=cval, mode='nearest'))
                             reshaped[reshaped_multihot > 0.5] = cl
                         reshaped_final_data.append(reshaped[None])
                 else:
                     reshaped_final_data.append(reshaped_data[None])
             reshaped_final_data = np.vstack(reshaped_final_data)
         else:
-            print("no separate z, order", order)
+            if verbose:
+                print("no separate z, order", order)
             reshaped = []
             for c in range(data.shape[0]):
-                reshaped.append(resize_fn(data[c], new_shape, order, **kwargs)[None])
+                reshaped.append(resize_fn(data[c], new_shape, order, cval=cval, **kwargs)[None])
             reshaped_final_data = np.vstack(reshaped)
         return reshaped_final_data.astype(dtype_data)
     else:
-        print("no resampling necessary")
+        if verbose:
+            print("no resampling necessary")
         return data
 
-
 class GenericPreprocessor(object):
-    def __init__(self, normalization_scheme_per_modality, use_nonzero_mask, transpose_forward: (tuple, list), intensityproperties=None):
+    def __init__(self, normalization_scheme_per_modality, use_nonzero_mask, transpose_forward: Union[tuple, list], intensityproperties=None):
         """
 
         :param normalization_scheme_per_modality: dict {0:'nonCT'}
@@ -577,7 +584,7 @@ class Preprocessor3DBetterResampling(GenericPreprocessor):
 
 
 class PreprocessorFor2D(GenericPreprocessor):
-    def __init__(self, normalization_scheme_per_modality, use_nonzero_mask, transpose_forward: (tuple, list), intensityproperties=None):
+    def __init__(self, normalization_scheme_per_modality, use_nonzero_mask, transpose_forward: Union[tuple, list], intensityproperties=None):
         super(PreprocessorFor2D, self).__init__(normalization_scheme_per_modality, use_nonzero_mask,
                                                 transpose_forward, intensityproperties)
 

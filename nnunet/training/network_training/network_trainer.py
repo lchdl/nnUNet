@@ -35,8 +35,8 @@ from collections import OrderedDict
 import torch.backends.cudnn as cudnn
 from abc import abstractmethod
 from datetime import datetime
-from tqdm import trange
 from nnunet.utilities.to_torch import maybe_to_torch, to_cuda
+from nnunet.utilities.progress_bar import Timer, minibar
 
 
 class NetworkTrainer(object):
@@ -94,7 +94,7 @@ class NetworkTrainer(object):
         # too high the training will take forever
         self.train_loss_MA_alpha = 0.93  # alpha * old + (1-alpha) * new
         self.train_loss_MA_eps = 5e-4  # new MA must be at least this much better (smaller)
-        self.max_num_epochs = 1000
+        self.max_num_epochs = 300
         self.num_batches_per_epoch = 250
         self.num_val_batches_per_epoch = 50
         self.also_val_in_tr_mode = False
@@ -114,12 +114,8 @@ class NetworkTrainer(object):
         self.log_file = None
         self.deterministic = deterministic
 
-        self.use_progress_bar = False
-        if 'nnunet_use_progress_bar' in os.environ.keys():
-            self.use_progress_bar = bool(int(os.environ['nnunet_use_progress_bar']))
-
         ################# Settings for saving checkpoints ##################################
-        self.save_every = 50
+        self.save_every = 1
         self.save_latest_only = True  # if false it will not store/overwrite _latest but separate files each
         # time an intermediate checkpoint is created
         self.save_intermediate_checkpoints = True  # whether or not to save checkpoint_latest
@@ -190,31 +186,32 @@ class NetworkTrainer(object):
         :return:
         """
         try:
-            font = {'weight': 'normal',
-                    'size': 18}
+            # font = {'weight': 'normal', 'size': 18}
+            # matplotlib.rc('font', **font)
 
-            matplotlib.rc('font', **font)
-
-            fig = plt.figure(figsize=(30, 24))
+            fig = plt.figure(figsize=(8, 6),dpi=300)
             ax = fig.add_subplot(111)
             ax2 = ax.twinx()
 
             x_values = list(range(self.epoch + 1))
 
-            ax.plot(x_values, self.all_tr_losses, color='b', ls='-', label="loss_tr")
-
-            ax.plot(x_values, self.all_val_losses, color='r', ls='-', label="loss_val, train=False")
+            line_width=0.7
+            ax.plot(x_values, self.all_tr_losses, color='b', ls='-', lw=line_width, label="loss_tr")
+            ax.plot(x_values, self.all_val_losses, color='r', ls='-', lw=line_width, label="loss_val, train=False")
 
             if len(self.all_val_losses_tr_mode) > 0:
-                ax.plot(x_values, self.all_val_losses_tr_mode, color='g', ls='-', label="loss_val, train=True")
+                ax.plot(x_values, self.all_val_losses_tr_mode, color='g', ls='--', lw=line_width, label="loss_val, train=True")
             if len(self.all_val_eval_metrics) == len(x_values):
-                ax2.plot(x_values, self.all_val_eval_metrics, color='g', ls='--', label="evaluation metric")
+                ax2.plot(x_values, self.all_val_eval_metrics, color='g', ls='-', lw=line_width, label="evaluation metric")
 
             ax.set_xlabel("epoch")
             ax.set_ylabel("loss")
             ax2.set_ylabel("evaluation metric")
             ax.legend()
             ax2.legend(loc=9)
+            
+            plt.grid(which='both',ls='--',lw=1,color=[200/255,200/255,200/255])
+            plt.title('Training Progress')
 
             fig.savefig(join(self.output_folder, "progress.png"))
             plt.close()
@@ -261,12 +258,8 @@ class NetworkTrainer(object):
         for key in state_dict.keys():
             state_dict[key] = state_dict[key].cpu()
         lr_sched_state_dct = None
-        if self.lr_scheduler is not None and hasattr(self.lr_scheduler,
-                                                     'state_dict'):  # not isinstance(self.lr_scheduler, lr_scheduler.ReduceLROnPlateau):
+        if self.lr_scheduler is not None and hasattr(self.lr_scheduler, 'state_dict'):
             lr_sched_state_dct = self.lr_scheduler.state_dict()
-            # WTF is this!?
-            # for key in lr_sched_state_dct.keys():
-            #    lr_sched_state_dct[key] = lr_sched_state_dct[key]
         if save_optimizer:
             optimizer_state_dict = self.optimizer.state_dict()
         else:
@@ -298,12 +291,12 @@ class NetworkTrainer(object):
             self.load_latest_checkpoint(train)
 
     def load_latest_checkpoint(self, train=True):
-        if isfile(join(self.output_folder, "model_final_checkpoint.model")):
-            return self.load_checkpoint(join(self.output_folder, "model_final_checkpoint.model"), train=train)
+        # if isfile(join(self.output_folder, "model_final_checkpoint.model")):
+        #     return self.load_checkpoint(join(self.output_folder, "model_final_checkpoint.model"), train=train)
         if isfile(join(self.output_folder, "model_latest.model")):
             return self.load_checkpoint(join(self.output_folder, "model_latest.model"), train=train)
-        if isfile(join(self.output_folder, "model_best.model")):
-            return self.load_best_checkpoint(train)
+        # if isfile(join(self.output_folder, "model_best.model")):
+        #     return self.load_best_checkpoint(train)
         raise RuntimeError("No checkpoint found")
 
     def load_final_checkpoint(self, train=False):
@@ -435,37 +428,31 @@ class NetworkTrainer(object):
             self.initialize(True)
 
         while self.epoch < self.max_num_epochs:
-            self.print_to_log_file("\nepoch: ", self.epoch)
+            self.print_to_log_file("\nepoch: ", self.epoch+1)
             epoch_start_time = time()
-            train_losses_epoch = []
 
-            # train one epoch
+            # train
             self.network.train()
-
-            if self.use_progress_bar:
-                with trange(self.num_batches_per_epoch) as tbar:
-                    for b in tbar:
-                        tbar.set_description("Epoch {}/{}".format(self.epoch+1, self.max_num_epochs))
-
-                        l = self.run_iteration(self.tr_gen, True)
-
-                        tbar.set_postfix(loss=l)
-                        train_losses_epoch.append(l)
-            else:
-                for _ in range(self.num_batches_per_epoch):
-                    l = self.run_iteration(self.tr_gen, True)
-                    train_losses_epoch.append(l)
-
+            train_losses_epoch = []
+            timer = Timer()
+            for current_batch in range(self.num_batches_per_epoch):
+                l = self.run_iteration(self.tr_gen, True)
+                train_losses_epoch.append(l)
+                minibar( msg='Epoch %d/%d'%(self.epoch+1, self.max_num_epochs), a = current_batch+1, b = self.num_batches_per_epoch, time = timer.elapsed())
+            print('')
             self.all_tr_losses.append(np.mean(train_losses_epoch))
             self.print_to_log_file("train loss : %.4f" % self.all_tr_losses[-1])
 
+            # val
             with torch.no_grad():
-                # validation with train=False
                 self.network.eval()
                 val_losses = []
-                for b in range(self.num_val_batches_per_epoch):
+                timer = Timer()
+                for current_batch in range(self.num_val_batches_per_epoch):
                     l = self.run_iteration(self.val_gen, False, True)
                     val_losses.append(l)
+                    minibar( msg='Epoch %d/%d'%(self.epoch+1, self.max_num_epochs), a = current_batch+1, b = self.num_val_batches_per_epoch, time = timer.elapsed())
+                print('')
                 self.all_val_losses.append(np.mean(val_losses))
                 self.print_to_log_file("validation loss: %.4f" % self.all_val_losses[-1])
 
@@ -494,12 +481,13 @@ class NetworkTrainer(object):
 
         self.epoch -= 1  # if we don't do this we can get a problem with loading model_final_checkpoint.
 
-        if self.save_final_checkpoint: self.save_checkpoint(join(self.output_folder, "model_final_checkpoint.model"))
+        if self.save_final_checkpoint: 
+            self.save_checkpoint(join(self.output_folder, "model_final_checkpoint.model"))
         # now we can delete latest as it will be identical with final
-        if isfile(join(self.output_folder, "model_latest.model")):
-            os.remove(join(self.output_folder, "model_latest.model"))
-        if isfile(join(self.output_folder, "model_latest.model.pkl")):
-            os.remove(join(self.output_folder, "model_latest.model.pkl"))
+        # if isfile(join(self.output_folder, "model_latest.model")):
+        #     os.remove(join(self.output_folder, "model_latest.model"))
+        # if isfile(join(self.output_folder, "model_latest.model.pkl")):
+        #     os.remove(join(self.output_folder, "model_latest.model.pkl"))
 
     def maybe_update_lr(self):
         # maybe update learning rate
@@ -521,7 +509,7 @@ class NetworkTrainer(object):
         if self.save_intermediate_checkpoints and (self.epoch % self.save_every == (self.save_every - 1)):
             self.print_to_log_file("saving scheduled checkpoint file...")
             if not self.save_latest_only:
-                self.save_checkpoint(join(self.output_folder, "model_ep_%03.0d.model" % (self.epoch + 1)))
+                self.save_checkpoint(join(self.output_folder, "model_ep_%04d.model" % (self.epoch + 1)))
             self.save_checkpoint(join(self.output_folder, "model_latest.model"))
             self.print_to_log_file("done")
 
@@ -607,13 +595,9 @@ class NetworkTrainer(object):
         # metrics
 
         self.plot_progress()
-
         self.maybe_update_lr()
-
         self.maybe_save_checkpoint()
-
         self.update_eval_criterion_MA()
-
         continue_training = self.manage_patience()
         return continue_training
 

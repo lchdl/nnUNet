@@ -14,6 +14,8 @@
 
 
 import argparse
+from nnunet.training.network_training.nnUNetTrainerV2 import nnUNetTrainerV2
+from nnunet.training.network_training.nnUNetTrainerV2_DynamicInference import nnUNetTrainerV2_DynamicInference
 from batchgenerators.utilities.file_and_folder_operations import *
 from nnunet.run.default_configuration import get_default_configuration
 from nnunet.paths import default_plans_identifier
@@ -46,16 +48,17 @@ def main():
                              "this is not necessary. Deterministic training will make you overfit to some random seed. "
                              "Don't use that.",
                         required=False, default=False, action="store_true")
-    parser.add_argument("--npz", required=False, default=False, action="store_true", help="if set then nnUNet will "
-                                                                                          "export npz files of "
-                                                                                          "predicted segmentations "
-                                                                                          "in the validation as well. "
-                                                                                          "This is needed to run the "
-                                                                                          "ensembling step so unless "
-                                                                                          "you are developing nnUNet "
-                                                                                          "you should enable this")
-    parser.add_argument("--find_lr", required=False, default=False, action="store_true",
-                        help="not used here, just for fun")
+    parser.add_argument("--npz", required=False, default=False, action="store_true", 
+                        help="if set then nnUNet will "
+                                "export npz files of "
+                                "predicted segmentations "
+                                "in the validation as well. "
+                                "This is needed to run the "
+                                "ensembling step so unless "
+                                "you are developing nnUNet "
+                                "you should enable this")
+    parser.add_argument("--softmax", required=False, default=False, action="store_true", 
+                        help="if set then nnUNet will save softmax during validation.")
     parser.add_argument("--valbest", required=False, default=False, action="store_true",
                         help="hands off. This is not intended to be used")
     parser.add_argument("--fp32", required=False, default=False, action="store_true",
@@ -74,13 +77,6 @@ def main():
                              "running postprocessing on each fold is computationally cheap, but some users have "
                              "reported issues with very large images. If your images are large (>600x600x600 voxels) "
                              "you should consider setting this flag.")
-    # parser.add_argument("--interp_order", required=False, default=3, type=int,
-    #                     help="order of interpolation for segmentations. Testing purpose only. Hands off")
-    # parser.add_argument("--interp_order_z", required=False, default=0, type=int,
-    #                     help="order of interpolation along z if z is resampled separately. Testing purpose only. "
-    #                          "Hands off")
-    # parser.add_argument("--force_separate_z", required=False, default="None", type=str,
-    #                     help="force_separate_z resampling. Can be None, True or False. Testing purpose only. Hands off")
     parser.add_argument('--val_disable_overwrite', action='store_false', default=True,
                         help='Validation does not overwrite existing segmentations')
     parser.add_argument('--disable_next_stage_pred', action='store_true', default=False,
@@ -90,6 +86,17 @@ def main():
                              'file, for example model_final_checkpoint.model). Will only be used when actually training. '
                              'Optional. Beta. Use with caution.')
 
+    parser.add_argument('--max_epochs', '-e', type=int, required=False, default=300, help='Max number of epochs for training (default 300).')
+    parser.add_argument('--num_train_batches', '-b', type=int, required=False, default=250, help='Number of batches for training in each epoch (default 250).')
+    parser.add_argument('--noval', action='store_true', required=False, default=False, help='No validation set.')
+
+    parser.add_argument('--custom_val_cases', type=str, required=False, help='Assign customized validation set cases.', nargs='+')
+
+    parser.add_argument('--save_every_epoch', action='store_true', required=False, default=False, 
+                        help='Model will be saved once an epoch is finished.')
+
+
+
     args = parser.parse_args()
 
     task = args.task
@@ -98,22 +105,18 @@ def main():
     network_trainer = args.network_trainer
     validation_only = args.validation_only
     plans_identifier = args.p
-    find_lr = args.find_lr
     disable_postprocessing_on_folds = args.disable_postprocessing_on_folds
-
     use_compressed_data = args.use_compressed_data
     decompress_data = not use_compressed_data
-
     deterministic = args.deterministic
     valbest = args.valbest
-
     fp32 = args.fp32
     run_mixed_precision = not fp32
-
     val_folder = args.val_folder
-    # interp_order = args.interp_order
-    # interp_order_z = args.interp_order_z
-    # force_separate_z = args.force_separate_z
+    max_epochs = args.max_epochs
+    num_train_batches = args.num_train_batches
+    noval = args.noval
+    custom_val_cases = args.custom_val_cases
 
     if not task.startswith("Task"):
         task_id = int(task)
@@ -123,15 +126,6 @@ def main():
         pass
     else:
         fold = int(fold)
-
-    # if force_separate_z == "None":
-    #     force_separate_z = None
-    # elif force_separate_z == "False":
-    #     force_separate_z = False
-    # elif force_separate_z == "True":
-    #     force_separate_z = True
-    # else:
-    #     raise ValueError("force_separate_z must be None, True or False. Given: %s" % force_separate_z)
 
     plans_file, output_folder_name, dataset_directory, batch_dice, stage, \
     trainer_class = get_default_configuration(network, task, network_trainer, plans_identifier)
@@ -148,10 +142,20 @@ def main():
         assert issubclass(trainer_class,
                           nnUNetTrainer), "network_trainer was found but is not derived from nnUNetTrainer"
 
-    trainer = trainer_class(plans_file, fold, output_folder=output_folder_name, dataset_directory=dataset_directory,
-                            batch_dice=batch_dice, stage=stage, unpack_data=decompress_data,
-                            deterministic=deterministic,
-                            fp16=run_mixed_precision)
+    if issubclass(trainer_class, nnUNetTrainerV2):
+        # nnUNetTrainerV2 class support manual assignment of training epochs and number of training batches.
+        trainer = trainer_class(plans_file, fold, output_folder=output_folder_name, dataset_directory=dataset_directory,
+                                batch_dice=batch_dice, stage=stage, unpack_data=decompress_data,
+                                deterministic=deterministic,
+                                fp16=run_mixed_precision, 
+                                max_num_epochs=max_epochs, num_batches_per_epoch=num_train_batches,no_validation=noval)
+    else:
+        # otherwise use ordinary constructor
+        trainer = trainer_class(plans_file, fold, output_folder=output_folder_name, dataset_directory=dataset_directory,
+                                batch_dice=batch_dice, stage=stage, unpack_data=decompress_data,
+                                deterministic=deterministic,
+                                fp16=run_mixed_precision)
+    
     if args.disable_saving:
         trainer.save_final_checkpoint = False # whether or not to save the final checkpoint
         trainer.save_best_checkpoint = False  # whether or not to save the best checkpoint according to
@@ -160,39 +164,61 @@ def main():
         # the training chashes
         trainer.save_latest_only = True  # if false it will not store/overwrite _latest but separate files each
 
+    if args.save_every_epoch:
+        trainer.save_latest_only = False
+
+    if isinstance(trainer, nnUNetTrainerV2):
+        if custom_val_cases is not None and len(custom_val_cases)>0:
+            print('user used customized validation set cases.')
+            print('validation set cases are:')
+            print(custom_val_cases)
+            trainer.set_custom_validation_set(custom_val_cases)
+            if noval:
+                print('WARNING: you assigned customized validation set cases but --noval is True. '
+                   'Validation set is disabled.')
+
     trainer.initialize(not validation_only)
 
-    if find_lr:
-        trainer.find_lr()
-    else:
-        if not validation_only:
-            if args.continue_training:
-                # -c was set, continue a previous training and ignore pretrained weights
-                trainer.load_latest_checkpoint()
-            elif (not args.continue_training) and (args.pretrained_weights is not None):
-                # we start a new training. If pretrained_weights are set, use them
-                load_pretrained_weights(trainer.network, args.pretrained_weights)
-            else:
-                # new training without pretraine weights, do nothing
-                pass
+    if isinstance(trainer, nnUNetTrainerV2_DynamicInference):
+        print('trainer object is an instance of "nnUNetTrainerV2_DynamicInference".')
+        print('initializing dynamic inference...')
+        trainer.init_dynamic_inference(task)
 
-            trainer.run_training()
+    if not validation_only:
+        if args.continue_training:
+            # -c was set, continue a previous training and ignore pretrained weights
+            trainer.load_latest_checkpoint()
+        elif (not args.continue_training) and (args.pretrained_weights is not None):
+            # we start a new training. If pretrained_weights are set, use them
+            load_pretrained_weights(trainer.network, args.pretrained_weights)
         else:
-            if valbest:
-                trainer.load_best_checkpoint(train=False)
-            else:
-                trainer.load_final_checkpoint(train=False)
+            # new training without pretraine weights, do nothing
+            pass
 
-        trainer.network.eval()
+        trainer.run_training()
+    else:
+        if valbest:
+            trainer.load_best_checkpoint(train=False)
+        else:
+            trainer.load_final_checkpoint(train=False)
 
-        # predict validation
-        trainer.validate(save_softmax=args.npz, validation_folder_name=val_folder,
-                         run_postprocessing_on_folds=not disable_postprocessing_on_folds,
-                         overwrite=args.val_disable_overwrite)
+    trainer.network.eval()
 
-        if network == '3d_lowres' and not args.disable_next_stage_pred:
-            print("predicting segmentations for the next stage of the cascade")
-            predict_next_stage(trainer, join(dataset_directory, trainer.plans['data_identifier'] + "_stage%d" % 1))
+    # predict validation
+    if noval == False: # has val :)
+        save_softmax = args.npz or args.softmax
+        trainer.validate(save_softmax=save_softmax, validation_folder_name=val_folder,
+                            run_postprocessing_on_folds=not disable_postprocessing_on_folds,
+                            overwrite=args.val_disable_overwrite)
+
+    if network == '3d_lowres' and not args.disable_next_stage_pred:
+        print("predicting segmentations for the next stage of the cascade")
+        predict_next_stage(trainer, join(dataset_directory, trainer.plans['data_identifier'] + "_stage%d" % 1))
+
+    if isinstance(trainer, nnUNetTrainerV2_DynamicInference):
+        print('making visualizations, please wait...')
+        trainer.visualize_training()
+        print('OK.')
 
 
 if __name__ == "__main__":

@@ -20,16 +20,13 @@ from time import sleep
 from typing import Tuple, List
 
 import matplotlib
+import nnunet
 import numpy as np
 import torch
 from batchgenerators.utilities.file_and_folder_operations import *
-from torch import nn
-from torch.optim import lr_scheduler
-
-import nnunet
 from nnunet.configuration import default_num_threads
 from nnunet.evaluation.evaluator import aggregate_scores
-from nnunet.inference.segmentation_export import save_segmentation_nifti_from_softmax
+from nnunet.inference.segmentation_export import save_segmentation_nifti_from_softmax, save_segmentation_softmax
 from nnunet.network_architecture.generic_UNet import Generic_UNet
 from nnunet.network_architecture.initialization import InitWeights_He
 from nnunet.network_architecture.neural_network import SegmentationNetwork
@@ -41,6 +38,9 @@ from nnunet.training.loss_functions.dice_loss import DC_and_CE_loss
 from nnunet.training.network_training.network_trainer import NetworkTrainer
 from nnunet.utilities.nd_softmax import softmax_helper
 from nnunet.utilities.tensor_utilities import sum_tensor
+from torch import nn
+from torch.optim import lr_scheduler
+
 
 matplotlib.use("agg")
 
@@ -555,7 +555,9 @@ class nnUNetTrainer(NetworkTrainer):
 
         # predictions as they come from the network go here
         output_folder = join(self.output_folder, validation_folder_name)
+        output_folder_softmax = join(self.output_folder, 'validation_raw_softmax')
         maybe_mkdir_p(output_folder)
+        maybe_mkdir_p(output_folder_softmax)
         # this is for debug purposes
         my_input_args = {'do_mirroring': do_mirroring,
                          'use_sliding_window': use_sliding_window,
@@ -619,15 +621,21 @@ class nnUNetTrainer(NetworkTrainer):
                     np.save(join(output_folder, fname + ".npy"), softmax_pred)
                     softmax_pred = join(output_folder, fname + ".npy")
 
+                # save hard segmentation
                 results.append(export_pool.starmap_async(save_segmentation_nifti_from_softmax,
                                                          ((softmax_pred, join(output_folder, fname + ".nii.gz"),
                                                            properties, interpolation_order, self.regions_class_order,
                                                            None, None,
                                                            softmax_fname, None, force_separate_z,
-                                                           interpolation_order_z),
-                                                          )
-                                                         )
-                               )
+                                                           interpolation_order_z),)))
+
+                # save channel softmax
+                if save_softmax:
+                    results.append(export_pool.starmap_async(save_segmentation_softmax,
+                                                            ((softmax_pred, join(output_folder_softmax, fname + ".nii.gz"),
+                                                            properties, interpolation_order, self.regions_class_order,
+                                                            softmax_fname, force_separate_z,
+                                                            interpolation_order_z),)))
 
             pred_gt_tuples.append([join(output_folder, fname + ".nii.gz"),
                                    join(self.gt_niftis_folder, fname + ".nii.gz")])
@@ -714,9 +722,7 @@ class nnUNetTrainer(NetworkTrainer):
                                if not np.isnan(i)]
         self.all_val_eval_metrics.append(np.mean(global_dc_per_class))
 
-        self.print_to_log_file("Average global foreground Dice:", [np.round(i, 4) for i in global_dc_per_class])
-        self.print_to_log_file("(interpret this as an estimate for the Dice of the different classes. This is not "
-                               "exact.)")
+        self.print_to_log_file("Estimated average global foreground Dice (not exact):", [np.round(i, 4) for i in global_dc_per_class])
 
         self.online_eval_foreground_dc = []
         self.online_eval_tp = []
