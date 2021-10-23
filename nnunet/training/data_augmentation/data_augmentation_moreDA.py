@@ -142,10 +142,11 @@ def get_moreDA_augmentation(dataloader_train, dataloader_val, patch_size, params
     if deep_supervision_scales is not None:
         if soft_ds:
             assert classes is not None
-            tr_transforms.append(DownsampleSegForDSTransform3(deep_supervision_scales, 'target', 'target', classes))
+            tr_transforms.append(DownsampleSegForDSTransform3(
+                ds_scales=deep_supervision_scales, input_key='target', output_key='target', classes=classes))
         else:
-            tr_transforms.append(DownsampleSegForDSTransform2(deep_supervision_scales, 0, 0, input_key='target',
-                                                              output_key='target'))
+            tr_transforms.append(DownsampleSegForDSTransform2(
+                ds_scales=deep_supervision_scales, order=0, input_key='target', output_key='target'))
 
     tr_transforms.append(NumpyToTensor(['data', 'target'], 'float'))
     tr_transforms = Compose(tr_transforms)
@@ -183,7 +184,7 @@ def get_moreDA_augmentation(dataloader_train, dataloader_val, patch_size, params
             assert classes is not None
             val_transforms.append(DownsampleSegForDSTransform3(deep_supervision_scales, 'target', 'target', classes))
         else:
-            val_transforms.append(DownsampleSegForDSTransform2(deep_supervision_scales, 0, 0, input_key='target',
+            val_transforms.append(DownsampleSegForDSTransform2(deep_supervision_scales, 0, input_key='target',
                                                                output_key='target'))
 
     val_transforms.append(NumpyToTensor(['data', 'target'], 'float'))
