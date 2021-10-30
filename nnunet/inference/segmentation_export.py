@@ -69,7 +69,7 @@ def save_segmentation_softmax(segmentation_softmax: Union[str, np.ndarray], out_
 
         if verbose: print("separate z:", do_separate_z, "lowres axis", lowres_axis)
         seg_old_spacing = resample_data_or_seg(segmentation_softmax, shape_original_after_cropping, is_seg=False,
-                                               axis=lowres_axis, order=order, do_separate_z=do_separate_z, cval=0,
+                                               axis=lowres_axis, order=order, do_separate_z=do_separate_z,
                                                order_z=interpolation_order_z)
     else:
         if verbose: print("no resampling necessary")
@@ -202,7 +202,7 @@ def save_segmentation_nifti_from_softmax(segmentation_softmax: Union[str, np.nda
 
         if verbose: print("separate z:", do_separate_z, "lowres axis", lowres_axis)
         seg_old_spacing = resample_data_or_seg(segmentation_softmax, shape_original_after_cropping, is_seg=False,
-                                               axis=lowres_axis, order=order, do_separate_z=do_separate_z, cval=0,
+                                               axis=lowres_axis, order=order, do_separate_z=do_separate_z,
                                                order_z=interpolation_order_z, verbose=False)
         # seg_old_spacing = resize_softmax_output(segmentation_softmax, shape_original_after_cropping, order=order)
     else:
@@ -307,7 +307,7 @@ def save_segmentation_nifti(segmentation, out_fname, dct, order=1, force_separat
 
             print("separate z:", do_separate_z, "lowres axis", lowres_axis)
             seg_old_spacing = resample_data_or_seg(segmentation[None], shape_original_after_cropping, is_seg=True,
-                                                   axis=lowres_axis, order=order, do_separate_z=do_separate_z, cval=0,
+                                                   axis=lowres_axis, order=order, do_separate_z=do_separate_z,
                                                    order_z=order_z)[0]
     else:
         seg_old_spacing = segmentation

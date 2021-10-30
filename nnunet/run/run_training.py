@@ -169,9 +169,6 @@ def main():
 
     if isinstance(trainer, nnUNetTrainerV2):
         if custom_val_cases is not None and len(custom_val_cases)>0:
-            print('user used customized validation set cases.')
-            print('validation set cases are:')
-            print(custom_val_cases)
             trainer.set_custom_validation_set(custom_val_cases)
             if noval:
                 print('WARNING: you assigned customized validation set cases but --noval is True. '
