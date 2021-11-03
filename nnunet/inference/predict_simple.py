@@ -114,6 +114,8 @@ def main():
                         help='Predictions are done with mixed precision by default. This improves speed and reduces '
                              'the required vram. If you want to disable mixed precision you can set this flag. Note '
                              'that yhis is not recommended (mixed precision is ~2x faster!)')
+    parser.add_argument('--disable_post_processing', default=False, action='store_true', required=False,
+                        help='Disable post-processing exported segmentations.')
 
     parser.add_argument('--save_softmax', required=False ,default=False, action='store_true',
                         help='Save softmax probabilities for test subjects.')
@@ -140,6 +142,8 @@ def main():
     model = args.model
     trainer_class_name = args.trainer_class_name
     cascade_trainer_class_name = args.cascade_trainer_class_name
+
+    disable_post_processing = args.disable_post_processing
 
     task_name = args.task_name
 
@@ -191,7 +195,8 @@ def main():
                             overwrite_existing=overwrite_existing, mode=mode, overwrite_all_in_gpu=all_in_gpu,
                             mixed_precision=not args.disable_mixed_precision,
                             step_size=step_size,
-                            save_softmax=save_softmax, selected_cases = selected_cases)
+                            save_softmax=save_softmax, selected_cases = selected_cases,
+                            disable_postprocessing=disable_post_processing)
         lowres_segmentations = lowres_output_folder
         torch.cuda.empty_cache()
         print("3d_lowres done")
@@ -211,8 +216,8 @@ def main():
                         overwrite_existing=overwrite_existing, mode=mode, overwrite_all_in_gpu=all_in_gpu,
                         mixed_precision=not args.disable_mixed_precision,
                         step_size=step_size, checkpoint_name=args.chk,
-                        save_softmax=save_softmax, selected_cases = selected_cases)
-
+                        save_softmax=save_softmax, selected_cases = selected_cases,
+                        disable_postprocessing=disable_post_processing)
 
 if __name__ == "__main__":
     main()

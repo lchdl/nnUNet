@@ -218,7 +218,7 @@ class NetworkTrainer(object):
         except IOError:
             self.print_to_log_file("failed to plot: ", sys.exc_info())
 
-    def print_to_log_file(self, *args, also_print_to_console=True, add_timestamp=True):
+    def print_to_log_file(self, *args, also_print_to_console=True, add_timestamp=False):
 
         timestamp = time()
         dt_object = datetime.fromtimestamp(timestamp)

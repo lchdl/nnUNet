@@ -381,8 +381,6 @@ def predict_from_folder(model: str, input_folder: str, output_folder: str, folds
     # check input folder integrity
     case_ids = check_input_folder_and_return_caseIDs(input_folder, expected_num_modalities)
 
-    print(case_ids)
-
     if selected_cases is not None:
         filtered_cases = []
         for case_name in case_ids:
@@ -390,7 +388,7 @@ def predict_from_folder(model: str, input_folder: str, output_folder: str, folds
                 filtered_cases.append(case_name)
         case_ids = filtered_cases
 
-    print(case_ids)
+    print('selected cases to predict:',case_ids)
 
     output_files = [join(output_folder, i + ".nii.gz") for i in case_ids]
     all_files = subfiles(input_folder, suffix=".nii.gz", join=False, sort=True)
