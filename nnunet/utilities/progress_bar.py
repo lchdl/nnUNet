@@ -1,6 +1,7 @@
 import sys
 import time
 import datetime
+import os
 
 class Timer(object):
 	def __init__(self, tick_now=True):
@@ -21,15 +22,18 @@ class Timer(object):
 		string = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 		return string
 
-def printx(msg,size=78,static=False):
-	assert isinstance(msg,str),'msg must be a string object.'
-	assert isinstance(size,int),'size must be a integer.'
-	assert isinstance(static,bool),'"static" parameter should be a boolean value.'
-	end = ''
-	if static == True: end='\n'
-	print('\r' +' '*size + '\r',end='')
-	print(msg[0:size],end=end)
-	sys.stdout.flush()
+def printx(msg):
+    '''
+    single line erasable output.
+    '''
+    assert isinstance(msg,str),'msg must be a string object.'
+    
+    columns = list(os.get_terminal_size())[0]
+    outsize = columns-1
+
+    print('\r' +' '*outsize + '\r',end='')
+    print(msg[0:outsize],end='')
+    sys.stdout.flush()
 
 def minibar(msg=None,a=None,b=None,time=None,fill='=',length=20):
 	if length<5: length=5
