@@ -28,7 +28,15 @@ def printx(msg):
     '''
     assert isinstance(msg,str),'msg must be a string object.'
     
-    columns = list(os.get_terminal_size())[0]
+    try:
+        columns = list(os.get_terminal_size())[0]
+    except KeyboardInterrupt:
+        raise
+    except:
+        # get_terminal_size() failed,
+        # probably due to invalid output device, then we ignore and return
+        return
+
     outsize = columns-1
 
     print('\r' +' '*outsize + '\r',end='')
