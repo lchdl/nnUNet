@@ -1,4 +1,4 @@
-Customized nnU-Net by Chenghao Liu. The following changes were made:
+Customized nnU-Net. The following changes were made:
 
 ## TRAINING
 * disabled data unpacking to speed up training (reduced IO).
