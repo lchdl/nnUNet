@@ -1,8 +1,6 @@
 Customized nnU-Net by Chenghao Liu. The following changes were made:
 
-==============
 == TRAINING ==
-==============
 * disabled data unpacking to speed up training (reduced IO).
 * changed default training epochs from 1000 to 300.
 * changed 'pin_memory' to 'False'.
@@ -13,14 +11,10 @@ Customized nnU-Net by Chenghao Liu. The following changes were made:
 * use '--save_every_epoch' to save models from all epochs.
 * add '--softmax' to save softmax values of validation set samples.
 
-===============
 == INFERENCE ==
-===============
 * add '--selected_cases XXX YYY ...' when inference will only predict the selected test subjects (XXX YYY ...) .
 * add '--softmax' to save softmax values of test set samples.
 
-============
 == OTHERS ==
-============
 * removed unused codes.
 * minor bug fixes...
