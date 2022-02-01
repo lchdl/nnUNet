@@ -1,7 +1,7 @@
 from __future__ import absolute_import
 
 print("")
-print("Customized nnU-Net by Chenghao Liu. The following changes were made:")
+print("Customized nnU-Net. The following changes were made:")
 print("==============")
 print("== TRAINING ==")
 print("==============")
